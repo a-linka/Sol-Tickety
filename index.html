@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Kanban Board (Fixed)</title>
+    <title>Ultimate Kanban Board (Cloud Edition)</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -54,8 +54,8 @@
     <header class="bg-dark-800 border-b border-dark-700 px-6 py-4 flex flex-col gap-4 shadow-lg">
         <div class="flex justify-between items-center">
             <div class="flex items-center gap-3">
-                <i class="fa-solid fa-layer-group text-cyan-400 text-2xl"></i>
-                <h1 class="text-xl font-bold tracking-wider text-white">ULTIMATE KANBAN BOARD</h1>
+                <i class="fa-solid fa-cloud text-cyan-400 text-2xl"></i>
+                <h1 class="text-xl font-bold tracking-wider text-white">CLOUD KANBAN BOARD</h1>
             </div>
             <div class="flex items-center gap-3">
                 <button onclick="openColumnModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition shadow-md flex items-center gap-2">
@@ -216,6 +216,11 @@
 
     <!-- JAVASCRIPT -->
     <script>
+        // === UPSTASH REDIS CONFIG (Doplň své údaje) ===
+         const UPSTASH_URL = "https://epic-albacore-242233.upstash.io";
+        const UPSTASH_TOKEN = "gQAAAAAAA7I5AAIgcDFkOTI1ZjAwNzNiZjE0ZGUzYjA2ODdjNmU0OTMxYjE4Zg";
+        const REDIS_KEY = "kanban_tickets_data";
+
         const APP_PASSWORD = "mithril123";
 
         function handleLogin(e) {
@@ -244,8 +249,6 @@
             sessionStorage.removeItem("kanban_auth");
             location.reload();
         }
-
-        const STORAGE_KEY = "local_kanban_ultimate_secure_data";
 
         const COLOR_PALETTE = [
             { name: "Cyan", hex: "#38bdf8" },
@@ -285,24 +288,40 @@
             ]
         };
 
-        function loadData() {
-            const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-                try {
-                    appData = JSON.parse(saved);
-                } catch (e) {
-                    console.error("Chyba při čtení lokálních dat", e);
+        // --- UPSTASH NAČTENÍ DAT ---
+        async function loadData() {
+            try {
+                const response = await fetch(`${UPSTASH_URL}/get/${REDIS_KEY}`, {
+                    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+                });
+                const result = await response.json();
+                if (result.result) {
+                    appData = JSON.parse(result.result);
                 }
+            } catch (e) {
+                console.error("Chyba při stahování z Upstachu, jedeme lokálně", e);
             }
             renderBoard();
             initColorPicker();
             updateFilterDropdowns();
         }
 
-        function saveData() {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+        // --- UPSTASH ULOŽENÍ DAT ---
+        async function saveData() {
             renderBoard();
             updateFilterDropdowns();
+            try {
+                await fetch(`${UPSTASH_URL}/set/${REDIS_KEY}`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${UPSTASH_TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(JSON.stringify(appData))
+                });
+            } catch (e) {
+                console.error("Chyba při ukládání na Upstash", e);
+            }
         }
 
         function formatDate(dateStr) {
@@ -827,7 +846,7 @@
             document.getElementById("delete-column-modal").classList.add("hidden");
         }
         function confirmDeleteColumn(action) {
-            const colId = document.getElementById("delete-column-id").value;
+            const colId = document.getElementById("delete-column-id-value") || document.getElementById("delete-column-id").value;
             if (action === 'delete') {
                 appData.tickets = appData.tickets.filter(t => t.columnId !== colId);
             } else if (action === 'transfer') {
@@ -844,7 +863,7 @@
             saveData();
         }
 
-        // Spuštění kontroly oprávnění
+        // Spuštění kontroly autentizace
         checkAuth();
     </script>
 </body>
