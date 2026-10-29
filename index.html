@@ -221,6 +221,48 @@
         const UPSTASH_TOKEN = "gQAAAAAAA7I5AAIgcDFkOTI1ZjAwNzNiZjE0ZGUzYjA2ODdjNmU0OTMxYjE4Zg";
         const REDIS_KEY = "kanban_tickets_data";
 
+        async function loadData() {
+    try {
+        const response = await fetch(`${UPSTASH_URL}/get/${REDIS_KEY}`, {
+            headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` }
+        });
+        const result = await response.json();
+        
+        // Upstash vrací { result: "stringified_json" }
+        if (result && result.result) {
+            appData = JSON.parse(result.result);
+            console.log("Data úspěšně načtena z Upstash cloudu!");
+        }
+    } catch (e) {
+        console.error("Chyba při stahování z Upstash:", e);
+    }
+    renderBoard();
+    initColorPicker();
+    updateFilterDropdowns();
+}
+
+// ULOŽENÍ DAT
+async function saveData() {
+    renderBoard();
+    updateFilterDropdowns();
+    try {
+        // Posíláme POST s polem příkazů: ["SET", "klic", "hodnota"]
+        const response = await fetch(`${UPSTASH_URL}`, {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${UPSTASH_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(["SET", REDIS_KEY, JSON.stringify(appData)])
+        });
+        
+        const res = await response.json();
+        console.log("Uloženo na Upstash:", res);
+    } catch (e) {
+        console.error("Chyba při ukládání na Upstash:", e);
+    }
+}
+
         const APP_PASSWORD = "mithril123";
 
         function handleLogin(e) {
