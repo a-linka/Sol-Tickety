@@ -276,7 +276,6 @@
 
         let selectedColorHex = "#38bdf8";
 
-        // VÝCHOZÍ STRUKTURA VČETNĚ DVOCH RUTINNÍCH SLOUPCŮ
         const DEFAULT_COLUMNS = [
             { id: "col-1", title: "Backlog" },
             { id: "col-2", title: "In Progress" },
@@ -310,9 +309,9 @@
                     if (raw && Array.isArray(raw.columns) && Array.isArray(raw.tickets)) {
                         appData = raw;
 
-                        // Automatická kontrola, zda v databázi už existují rutinní sloupce, případně je doplníme
-                        const hasRoutine = appData.columns.some(c => c.id === "col-rutina-1" || c.title.includes("Rutina"));
-                        if (!hasRoutine) {
+                        // Kontrola a přidání rutinních sloupců, pokud chybí
+                        const hasRoutine1 = appData.columns.some(c => c.id === "col-rutina-1" || c.title.includes("Rutina"));
+                        if (!hasRoutine1) {
                             appData.columns.push(
                                 { id: "col-rutina-1", title: "Rutina – K plnění" },
                                 { id: "col-rutina-2", title: "Rutina – Hotovo" }
@@ -330,6 +329,9 @@
                     tickets: []
                 };
             }
+
+            // Zkontrolujeme, jestli nenastal čas probudit nějaké rutiny z hotova
+            checkRoutineWakeUp();
 
             renderBoard();
             initColorPicker();
@@ -569,12 +571,12 @@
                             <div class="space-y-1 my-2 pt-2 border-t border-dark-700/50 text-[11px] text-slate-400">
                                 ${t.deadline ? `
                                 <div class="flex justify-between items-center">
-                                    <span><i class="fa-solid fa-hourglass-half mr-1"></i>Deadline:</span>
+                                    <span><i class="fa-solid fa-hourglass-half mr-1"></i>Příští termín:</span>
                                     ${deadlineHtml}
                                 </div>` : ''}
                                 ${t.completedAt ? `
                                 <div class="flex justify-between items-center text-emerald-400 font-medium">
-                                    <span><i class="fa-regular fa-circle-check mr-1"></i>Splněno:</span>
+                                    <span><i class="fa-regular fa-circle-check mr-1"></i>Naposledy splněno:</span>
                                     <span>${formatDate(t.completedAt)}</span>
                                 </div>` : ''}
                             </div>
@@ -682,38 +684,64 @@
             draggedTicketId = null;
         }
 
-        function checkCompletionStatus(ticket, columnId) {
+       function checkCompletionStatus(ticket, columnId) {
             const col = appData.columns.find(c => c.id === columnId);
             if (!col) return;
             const titleLower = col.title.toLowerCase();
 
-            // KONTROLA DOKONČENÍ / RUTINY
+            // Pokud úkol skončil v jakémkoliv "hotovo" nebo "done" sloupci
             if (titleLower.includes("done") || titleLower.includes("hotovo")) {
-                if (!ticket.completedAt) {
-                    ticket.completedAt = new Date().toISOString().split('T')[0];
-                    addHistory(ticket, "Označeno jako dokončené");
-                }
+                const today = new Date().toISOString().split('T')[0];
+                ticket.completedAt = today;
 
-                // RECYKLACE OPAKUJÍCÍCH SE ÚKOLŮ
+
                 if (ticket.recurring && ticket.recurring !== "none") {
-                    let targetColId = appData.columns[0].id;
-                    const routineFirst = appData.columns.find(c => c.id === "col-rutina-1" || c.title.toLowerCase().includes("k plnění"));
-                    if (routineFirst) targetColId = routineFirst.id;
+                    let baseDate = ticket.deadline ? new Date(ticket.deadline) : new Date();
+                    
 
-                    if (ticket.deadline) {
-                        let d = new Date(ticket.deadline);
-                        if (ticket.recurring === "daily") d.setDate(d.getDate() + 1);
-                        else if (ticket.recurring === "weekly") d.setDate(d.getDate() + 7);
-                        else if (ticket.recurring === "monthly") d.setMonth(d.getMonth() + 1);
-                        ticket.deadline = d.toISOString().split('T')[0];
+                    if (baseDate < new Date()) {
+                        baseDate = new Date();
                     }
 
-                    ticket.columnId = targetColId;
-                    ticket.completedAt = null;
-                    addHistory(ticket, `🔄 Opakující se úkol automaticky obnoven na nový termín`);
+                    if (ticket.recurring === "daily") baseDate.setDate(baseDate.getDate() + 1);
+                    else if (ticket.recurring === "weekly") baseDate.setDate(baseDate.getDate() + 7);
+                    else if (ticket.recurring === "monthly") baseDate.setMonth(baseDate.getMonth() + 1);
+
+                    ticket.deadline = baseDate.toISOString().split('T')[0];
+                    addHistory(ticket, `🔄 Splněno! Nový termín: ${formatDate(ticket.deadline)}, zůstává v Hotovo.`);
+                } else {
+                    addHistory(ticket, "Označeno jako dokončené");
                 }
             } else {
+                // Pokud ho někdo vytáhne ven z hotova do rozpracovaných, smažeme datum splnění
                 ticket.completedAt = null;
+            }
+        }
+
+
+        function checkRoutineWakeUp() {
+            const todayStr = new Date().toISOString().split('T')[0];
+            let changed = false;
+
+            appData.tickets.forEach(ticket => {
+                if (ticket.recurring && ticket.recurring !== "none" && ticket.deadline && ticket.deadline <= todayStr) {
+                    const col = appData.columns.find(c => c.id === ticket.columnId);
+                    if (col && (col.title.toLowerCase().includes("done") || col.title.toLowerCase().includes("hotovo"))) {
+                        
+                        let targetColId = appData.columns[0].id;
+                        const routineFirst = appData.columns.find(c => c.id === "col-rutina-1" || c.title.toLowerCase().includes("k plnění"));
+                        if (routineFirst) targetColId = routineFirst.id;
+
+                        ticket.columnId = targetColId;
+                        ticket.completedAt = null; // Vyčistíme staré dokončení pro nové kolo
+                        addHistory(ticket, `🔔 Nastal čas splnění! Úkol se automaticky vrátil do plnění.`);
+                        changed = true;
+                    }
+                }
+            });
+
+            if (changed) {
+                saveData();
             }
         }
 
