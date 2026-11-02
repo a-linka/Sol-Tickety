@@ -144,9 +144,21 @@
                         <input type="text" id="ticket-assignee-input" placeholder="Kdo na tom maká" class="w-full bg-dark-900 border border-dark-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500">
                     </div>
                 </div>
-                <div>
-                    <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Deadline (Do kdy hotovo)</label>
-                    <input type="date" id="ticket-deadline-input" class="w-full bg-dark-900 border border-dark-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500">
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 uppercase mb-1">Deadline (Do kdy hotovo)</label>
+                        <input type="date" id="ticket-deadline-input" class="w-full bg-dark-900 border border-dark-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 uppercase mb-1"><i class="fa-solid fa-rotate mr-1 text-cyan-400"></i>Opakování (Rutina)</label>
+                        <select id="ticket-recurring-input" class="w-full bg-dark-900 border border-dark-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-cyan-500">
+                            <option value="none">Jednorázový (Neopakovat)</option>
+                            <option value="daily">Každý den</option>
+                            <option value="weekly">Každý týden</option>
+                            <option value="monthly">Každý měsíc</option>
+                        </select>
+                    </div>
                 </div>
 
                 <!-- KOMENTÁŘE A HISTORIE -->
@@ -264,12 +276,17 @@
 
         let selectedColorHex = "#38bdf8";
 
+        // VÝCHOZÍ STRUKTURA VČETNĚ DVOCH RUTINNÍCH SLOUPCŮ
+        const DEFAULT_COLUMNS = [
+            { id: "col-1", title: "Backlog" },
+            { id: "col-2", title: "In Progress" },
+            { id: "col-3", title: "Done" },
+            { id: "col-rutina-1", title: "Rutina – K plnění" },
+            { id: "col-rutina-2", title: "Rutina – Hotovo" }
+        ];
+
         let appData = {
-            columns: [
-                { id: "col-1", title: "Backlog" },
-                { id: "col-2", title: "In Progress" },
-                { id: "col-3", title: "Done" }
-            ],
+            columns: DEFAULT_COLUMNS,
             tickets: []
         };
 
@@ -292,6 +309,15 @@
                     
                     if (raw && Array.isArray(raw.columns) && Array.isArray(raw.tickets)) {
                         appData = raw;
+
+                        // Automatická kontrola, zda v databázi už existují rutinní sloupce, případně je doplníme
+                        const hasRoutine = appData.columns.some(c => c.id === "col-rutina-1" || c.title.includes("Rutina"));
+                        if (!hasRoutine) {
+                            appData.columns.push(
+                                { id: "col-rutina-1", title: "Rutina – K plnění" },
+                                { id: "col-rutina-2", title: "Rutina – Hotovo" }
+                            );
+                        }
                     }
                 }
             } catch (e) {
@@ -300,11 +326,7 @@
 
             if (!appData || !Array.isArray(appData.columns)) {
                 appData = {
-                    columns: [
-                        { id: "col-1", title: "Backlog" },
-                        { id: "col-2", title: "In Progress" },
-                        { id: "col-3", title: "Done" }
-                    ],
+                    columns: DEFAULT_COLUMNS,
                     tickets: []
                 };
             }
@@ -505,6 +527,12 @@
                             `</div>`;
                     }
 
+                    let recurringBadge = "";
+                    if (t.recurring && t.recurring !== "none") {
+                        const recLabels = { daily: "Denně", weekly: "Týdně", monthly: "Měsíčně" };
+                        recurringBadge = `<span class="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"><i class="fa-solid fa-rotate mr-1"></i>${recLabels[t.recurring] || t.recurring}</span>`;
+                    }
+
                     const commentCount = t.comments ? t.comments.length : 0;
 
                     let mobileControls = `
@@ -524,7 +552,10 @@
                              class="ticket-card bg-dark-900 border border-dark-700 p-4 rounded-xl shadow-md cursor-pointer group relative" 
                              onclick="openEditModal('${t.id}')">
                             <div class="flex justify-between items-start mb-1">
-                                <span class="text-[10px] px-2 py-0.5 rounded-md border ${priorityColor} font-semibold uppercase tracking-wider">${t.priority}</span>
+                                <div class="flex items-center gap-1 flex-wrap">
+                                    <span class="text-[10px] px-2 py-0.5 rounded-md border ${priorityColor} font-semibold uppercase tracking-wider">${t.priority}</span>
+                                    ${recurringBadge}
+                                </div>
                                 <div class="flex items-center gap-2">
                                     ${mobileControls}
                                     <button onclick="event.stopPropagation(); deleteTicket('${t.id}')" class="text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-xmark"></i></button>
@@ -653,16 +684,36 @@
 
         function checkCompletionStatus(ticket, columnId) {
             const col = appData.columns.find(c => c.id === columnId);
-            if (col) {
-                const titleLower = col.title.toLowerCase();
-                if (titleLower.includes("done") || titleLower.includes("hotovo")) {
-                    if (!ticket.completedAt) {
-                        ticket.completedAt = new Date().toISOString().split('T')[0];
-                        addHistory(ticket, "Označeno jako dokončené");
-                    }
-                } else {
-                    ticket.completedAt = null;
+            if (!col) return;
+            const titleLower = col.title.toLowerCase();
+
+            // KONTROLA DOKONČENÍ / RUTINY
+            if (titleLower.includes("done") || titleLower.includes("hotovo")) {
+                if (!ticket.completedAt) {
+                    ticket.completedAt = new Date().toISOString().split('T')[0];
+                    addHistory(ticket, "Označeno jako dokončené");
                 }
+
+                // RECYKLACE OPAKUJÍCÍCH SE ÚKOLŮ
+                if (ticket.recurring && ticket.recurring !== "none") {
+                    let targetColId = appData.columns[0].id;
+                    const routineFirst = appData.columns.find(c => c.id === "col-rutina-1" || c.title.toLowerCase().includes("k plnění"));
+                    if (routineFirst) targetColId = routineFirst.id;
+
+                    if (ticket.deadline) {
+                        let d = new Date(ticket.deadline);
+                        if (ticket.recurring === "daily") d.setDate(d.getDate() + 1);
+                        else if (ticket.recurring === "weekly") d.setDate(d.getDate() + 7);
+                        else if (ticket.recurring === "monthly") d.setMonth(d.getMonth() + 1);
+                        ticket.deadline = d.toISOString().split('T')[0];
+                    }
+
+                    ticket.columnId = targetColId;
+                    ticket.completedAt = null;
+                    addHistory(ticket, `🔄 Opakující se úkol automaticky obnoven na nový termín`);
+                }
+            } else {
+                ticket.completedAt = null;
             }
         }
 
@@ -700,6 +751,7 @@
             document.getElementById("ticket-assignee-input").value = "";
             document.getElementById("ticket-deadline-input").value = "";
             document.getElementById("ticket-tags-input").value = "";
+            if (document.getElementById("ticket-recurring-input")) document.getElementById("ticket-recurring-input").value = "none";
             selectCustomColor("#38bdf8");
             document.getElementById("modal-extra-section").classList.add("hidden");
             document.getElementById("ticket-modal").classList.remove("hidden");
@@ -717,6 +769,7 @@
             document.getElementById("ticket-assignee-input").value = t.assignee || "";
             document.getElementById("ticket-deadline-input").value = t.deadline || "";
             document.getElementById("ticket-tags-input").value = t.tags ? t.tags.join(", ") : "";
+            if (document.getElementById("ticket-recurring-input")) document.getElementById("ticket-recurring-input").value = t.recurring || "none";
             selectCustomColor(t.color || "#38bdf8");
 
             renderComments(t);
@@ -789,6 +842,7 @@
             const priority = document.getElementById("ticket-priority-input").value;
             const assignee = document.getElementById("ticket-assignee-input").value;
             const deadline = document.getElementById("ticket-deadline-input").value || null;
+            const recurring = document.getElementById("ticket-recurring-input") ? document.getElementById("ticket-recurring-input").value : "none";
             const color = selectedColorHex;
 
             const rawTags = document.getElementById("ticket-tags-input").value;
@@ -802,6 +856,7 @@
                     t.priority = priority;
                     t.assignee = assignee;
                     t.deadline = deadline;
+                    t.recurring = recurring;
                     t.color = color;
                     t.tags = tags;
                     addHistory(t, "Ticket upraven");
@@ -811,7 +866,7 @@
                 const newTicket = {
                     id: "t-" + Date.now(),
                     columnId: appData.columns[0].id,
-                    title, description, priority, assignee, deadline, color, tags,
+                    title, description, priority, assignee, deadline, recurring, color, tags,
                     createdAt: today,
                     completedAt: null,
                     comments: [],
